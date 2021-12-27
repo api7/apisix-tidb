@@ -28,7 +28,7 @@ Apache APISIX 是一款云原生的 API 网关，其使用 [ETCD](https://etcd.i
 整个项目的设计大约可以分为如下两步：
 
 1. 决定 TiDB 和 Apache APISIX 的集成方式
-2. 设计 TiDB 中 Apache APISIX 的数据保存格式；
+2. 设计 TiDB 中 Apache APISIX 的数据表
 
 我们将依次介绍其设计。
 
@@ -55,10 +55,31 @@ Apache APISIX 之所以选择 ETCD 作为其原生配置中心，除了考虑到
 
 由于配置变更不在 Apache APISIX 这一侧，我们没有了编程语言的限制，因此我们考虑使用主流的 [Go](https://go.dev/) 语言进行开发（TiDB 本身也使用了 Go 语言）因此功能 2 的实现难度较低，我们也可以得到来自 Go 和 TiDB 两个社区的支持。
 
-而对于第一项功能，对其进行拆分后可以了解到，它所做的是一个 ETCD 适配器，我们需要去使用 ETCD 主仓库提供的 ETCD API 桩代码，实现一个 gRPC 服务，同时自定义其数据来源（TiDB）。
+而对于第一项功能，对其进行拆分后可以了解到，它所做的是一个 ETCD 适配器，我们需要去使用 ETCD 主仓库提供的 ETCD API 桩代码，实现一个 gRPC 服务，同时自定义其数据来源（TiDB）。而针对第二项功能，因为关系型数据库本身的特点，我们没有可直接利用的“推”的特性，我们需要进行扫表来确定数据是否有变更，一个比较简单的方法是取当前的时间戳，将更新时间大于或等于当前时间的记录取出来，转换成 Apache APISIX 期望的配置格式并推送到所有的实例，当然，当 ETCD adapter 启动时我们需要进行一次全量获取。
 
 事实上，早在 2021 年年中，Apache APISIX 社区就有了类似的方案来扩展配置中心，[API7.ai](https://www.apiseven.com/en) 开源了一个项目 [api7/etcd-adapter](https://github.com/api7/etcd-adapter)，就实现了对应的功能。因此我们可以「站在巨人的肩膀上」进行开发贡献。
 
 在确定该方案确定可行后，我们明确了 Apache APISIX 和 TiDB 的交互方式，其架构图如下：
 
 ![apisix-tidb](./assets/apisix-tidb.png)
+
+### 设计 TiDB 中 Apache APISIX 的数据表
+
+Apache APISIX 包含了多种不同的数据，比如 Route, Upstream 和 Plugin 等，详情可以参考 [admin-api](https://apisix.apache.org/docs/apisix/admin-api/). 我们将为每一种数据都单独准备一张表，考虑到这些数据本身格式的复杂性和多样性，我们不会为每一个字段都单独设计表的一列来表示，而是将其序列化（比如使用 JSON）后保存为字符串数据。
+
+如下是保存 Apache APISIX Route 数据的表结构：
+
+```sql
+CREATE TABLE IF NOT EXISTS `route` (
+    `id` BIGINT NOT NULL,
+    `spec` TEXT NOT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+);
+```
+
+Route 数据的详细信息将被保存在 `spec` 字段中，使用该方式能够有效地兼容不同版本间的数据差异，从而减少 DDL 变更。
+
+
+关于数据库表的详细设计请参考 [apisix.sql](apisix.sql)。
