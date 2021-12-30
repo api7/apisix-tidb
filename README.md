@@ -1,4 +1,4 @@
-# 使用 TiDB 作为 Apache APISIX 的配置中心您
+# 使用 TiDB 作为 Apache APISIX 的配置中心
 
 ## 作者信息
 
